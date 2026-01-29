@@ -1,162 +1,176 @@
-from anyio.lowlevel import checkpoint
-from langchain_core.prompts import ChatPromptTemplate
-from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.constants import START, END
-from langgraph.graph import MessagesState, StateGraph
-from langchain_openai import ChatOpenAI
+import os
+from typing import TypedDict, Optional
+from langgraph.graph import StateGraph
+from src.agent.AliyunLLM import AliyunLLMWrapper
 
 
-from agent.basic_tool_node import BasicToolNode
-from agent.rag_tool import PPTRagTool
+os.environ["ALIYUN_API_KEY"] = "sk-30b0ba857316437087ace218df67aa95"
+# 1. State 定义
+class LearningState(TypedDict):
+    # -------- 用户输入 --------
+    learning_goal: str
+    background: str
+    time_budget: str
 
-# 测试环境直接硬编码了
+    # -------- 中间状态 --------
+    refined_goal: Optional[str]
+    knowledge_context: Optional[str]
+    learning_strategy: Optional[str]
 
-# checkpointer = InMemorySaver()
-# 直接继承。
-# class State(MessagesState):
-#     pass
-
-# async def create_rag_agent():
-
-#     builder = StateGraph(State)
-
-#     llm = ChatOpenAI(
-#         api_key="sk-58c077b8242248dd8af6bfbe85431ba0",
-#         base_url="https://api.deepseek.com/v1",  # DeepSeek API基础URL
-#         model="deepseek-chat",
-#         temperature = 1.3
-#     )
-
-#     # 拿到工具
-#     tool = PPTRagTool()
-#     tools = [tool]
-#     llm_with_rag = llm.bind_tools(tools) # 让llm知道它有哪些工具，但它没法执行，需要定义工具节点
+    # -------- 最终输出 --------
+    learning_plan_document: Optional[str]
 
 
-#     # 开始定义节点了
-
-#     # LLM节点函数
-#     async def chatbot(state: State):
-#         # 直接传递消息给 chain
-#         response = await llm_with_rag.ainvoke(state["messages"])
-#         return {"messages": [response]}
-
-#     # 添加LLM节点
-#     builder.add_node('chatbot',chatbot)
-
-
-#     # 工具节点类
-#     # 也可以tool_node = ToolNode(tools) 官方自带的，内置了一些东西，但是感觉不如自定义
-#     tool_node = BasicToolNode(tools) # 用自定义的类加载工具类
-#     # 添加工具节点
-#     builder.add_node('tools',tool_node)
-
-
-#     # 添加逻辑边
-#     builder.add_edge(START,'chatbot') # 开始边
-
-
-#     # 路由函数可以不是异步的，判断需不需要转到工具节点
-#     def route_tools_func(state: State):
-#         """
-#         动态路由函数，如果大模型输出的AIMessage中包含工具的请求指令，就会进入到工具节点
-#         :param state:
-#         :return:
-#         """
-#         if isinstance(state,list):
-#             ai_message = state[-1]
-#         elif messages := state.get("messages",[]):
-#             ai_message = messages[-1]
-#         else:
-#             raise ValueError(f"No messages found in input state to tool_edge: {state}")
-
-#         if hasattr(ai_message,"tool_calls") and len(ai_message.tool_calls)>0:
-#             return "tools"
-#         else:
-#             return END
-
-#     builder.add_conditional_edges(
-#         'chatbot',
-#         route_tools_func,
-#         [END,'tools']
-#     ) # 条件边
-
-
-#     builder.add_edge('tools','chatbot') # 工具调用完自然回到大模型节点
-#     # 不需要结束边了
-
-#     graph = builder.compile(checkpointer=checkpointer) # langgraph 环境测试一下
-
-#     return graph
-class State(MessagesState):
-    pass
-
-builder = StateGraph(State)
-
-llm = ChatOpenAI(
-    api_key="sk-58c077b8242248dd8af6bfbe85431ba0",
-    base_url="https://api.deepseek.com/v1",  # DeepSeek API基础URL
-    model="deepseek-chat",
-    temperature = 1.3
+# 2. LLM 初始化（ChatGPT）
+# llm = ChatOpenAI(
+#     model="gpt-3.5-turbo",
+#     temperature=0.2,
+# )
+# 初始化 DeepSeek LLM
+# llm = DeepSeekLLM(
+#     api_key="你的_DEEPSEEK_API_KEY",
+#     model="deepseek-v1",  # 具体模型名根据 DeepSeek 提供的版本
+#     temperature=0.2,      # 控制生成随机性
+# )
+llm = AliyunLLMWrapper(
+    model_name="qwen-plus",   # 或 "qwen-plus"
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+    temperature=0.7
 )
 
-# 拿到工具
-tool = PPTRagTool()
-tools = [tool]
-llm_with_rag = llm.bind_tools(tools) # 让llm知道它有哪些工具，但它没法执行，需要定义工具节点
+# 3. 各节点定义
+def refine_goal(state: LearningState) -> LearningState:
+    """澄清学习目标"""
+    prompt = f"""
+你是学习规划专家。
+
+【用户原始目标】
+{state["learning_goal"]}
+
+【用户背景】
+{state["background"]}
+
+【时间条件】
+{state["time_budget"]}
+
+请将该目标澄清为：
+- 明确的学习终点
+- 可执行、可评估
+- 避免空泛表述
+
+直接输出澄清后的目标。
+"""
+    res = llm.invoke(prompt)
+    state["refined_goal"] = res.content
+    return state
+
+def retrieve_knowledge(state: LearningState) -> LearningState:
+    """模拟 RAG：注入领域学习结构经验"""
+    state["knowledge_context"] = """
+- 该领域通常分为：基础 → 核心 → 应用 → 综合实践
+- 学习路径应避免一开始陷入细节
+- 时间应向核心能力和可迁移能力倾斜
+- 每阶段学习成果应可验证
+"""
+    return state
 
 
-# 开始定义节点
+def decide_strategy(state: LearningState) -> LearningState:
+    """生成整体学习策略"""
+    prompt = f"""
+你是学习策略设计专家。
 
-# LLM节点函数
-async def chatbot(state: State):
-    # 直接传递消息给 chain
-    response = await llm_with_rag.ainvoke(state["messages"])
-    return {"messages": [response]}
+【澄清后的学习目标】
+{state["refined_goal"]}
 
-# 添加LLM节点
-builder.add_node('chatbot',chatbot)
+【用户背景】
+{state["background"]}
 
+【时间条件】
+{state["time_budget"]}
 
-# 工具节点类
-# 也可以tool_node = ToolNode(tools) 官方自带的，内置了一些东西，但是感觉不如自定义
-tool_node = BasicToolNode(tools) # 用自定义的类加载工具类
-# 添加工具节点
-builder.add_node('tools',tool_node)
+【参考知识】
+{state["knowledge_context"]}
 
+请给出整体学习策略说明：
+- 学习节奏
+- 理论 vs 实践占比
+- 阶段性重点
 
-# 添加逻辑边
-builder.add_edge(START,'chatbot') # 开始边
-
-
-# 路由函数可以不是异步的，判断需不需要转到工具节点
-def route_tools_func(state: State):
-    """
-    动态路由函数，如果大模型输出的AIMessage中包含工具的请求指令，就会进入到工具节点
-    :param state:
-    :return:
-    """
-    if isinstance(state,list):
-        ai_message = state[-1]
-    elif messages := state.get("messages",[]):
-        ai_message = messages[-1]
-    else:
-        raise ValueError(f"No messages found in input state to tool_edge: {state}")
-
-    if hasattr(ai_message,"tool_calls") and len(ai_message.tool_calls)>0:
-        return "tools"
-    else:
-        return END
-
-builder.add_conditional_edges(
-    'chatbot',
-    route_tools_func,
-    [END,'tools']
-) # 条件边
+不需要列具体知识点。
+"""
+    res = llm.invoke(prompt)
+    state["learning_strategy"] = res.content
+    return state
 
 
-builder.add_edge('tools','chatbot') # 工具调用完自然回到大模型节点
-# 不需要结束边了
+def generate_learning_plan_document(state: LearningState) -> LearningState:
+    """生成最终学习路径文档（融合：大纲 + 路线 + 时间）"""
+    prompt = f"""
+你需要生成一份【完整学习路径文档（Markdown）】。
 
-graph = builder.compile() # langgraph 环境测试一下
+【学习目标】
+{state["refined_goal"]}
+
+【用户背景】
+{state["background"]}
+
+【整体学习策略】
+{state["learning_strategy"]}
+
+【总时间约束】
+{state["time_budget"]}
+
+【输出要求（非常重要）】：
+1. 使用 Markdown
+2. 按【阶段】组织（如：阶段一 / 阶段二）
+3. 每个阶段包含多个【学习模块】
+4. 每个学习模块必须包含：
+   - 学习主题
+   - 学习目标
+   - 学习内容（具体知识或技能）
+   - 前置依赖
+   - 建议学习时间（明确到周或小时）
+5. 时间分配要与总时间约束大致匹配
+6. 只输出最终文档，不要解释
+
+开始输出。
+"""
+    res = llm.invoke(prompt)
+    state["learning_plan_document"] = res.content
+    return state
+
+
+# 4. LangGraph 组装
+
+builder = StateGraph(LearningState)
+
+builder.add_node("refine_goal", refine_goal)
+builder.add_node("retrieve_knowledge", retrieve_knowledge)
+builder.add_node("decide_strategy", decide_strategy)
+builder.add_node("generate_learning_plan_document", generate_learning_plan_document)
+
+builder.set_entry_point("refine_goal")
+
+builder.add_edge("refine_goal", "retrieve_knowledge")
+builder.add_edge("retrieve_knowledge", "decide_strategy")
+builder.add_edge("decide_strategy", "generate_learning_plan_document")
+
+graph = builder.compile()
+
+
+# 5. 调用示例
+
+if __name__ == "__main__":
+    result = graph.invoke({
+        "learning_goal": "系统学习高中数学",  # 你的核心学习目标
+        "background": "我已经掌握初中数学的基础知识，包括代数、几何、初步概率和统计",  # 学生背景
+        "time_budget": "3 个月，每周 15 小时",  # 可用时间
+        "priority_topics": "函数、三角、立体几何、数列与概率",  # 想重点学习的章节
+    })
+    # 7️⃣ 输出到 Markdown 文件
+    output_file = "learning_plan.md"
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write(result["learning_plan_document"])
+    print(f"\n学习路径文档已保存到 {output_file}")
 
