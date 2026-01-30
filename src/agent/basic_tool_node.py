@@ -59,8 +59,10 @@ class BasicToolNode:
                 if hasattr(tool,'ainvoke'): # 优先使用异步方法
                     tool_result = await tool.ainvoke(tool_call['args'])
                 else: # 即使只支持同步，我也用异步线程池去异步
-                    tool_result = await submit_task(
-                        tool.invoke,
+                    loop = asyncio.get_running_loop()
+                    tool_result = await loop.run_in_executor(
+                        None,# 使用默认线程池
+                        tool.invoke, # 同步调用方法
                         tool_call['args']
                     )
 
