@@ -9,7 +9,6 @@ class RAGRetriever:
     - 只负责：向量检索
     - 不关心 LangGraph / Agent / Prompt
     """
-
     def __init__(
         self,
         vector_db_path: str,
@@ -33,12 +32,10 @@ class RAGRetriever:
         docs: List[Document] = self.vectorstore.similarity_search(
             query, k=self.top_k
         )
-
         if not docs:
             return "（未检索到相关知识）"
 
         context = "\n\n".join(
             f"- {doc.page_content.strip()}" for doc in docs
         )
-
         return context

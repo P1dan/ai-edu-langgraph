@@ -5,7 +5,7 @@ from langchain_community.embeddings import DashScopeEmbeddings
 
 def build_vector_db():
     loader = TextLoader(
-        "../rag_data/三角函数学习路径.md",
+        "../../data/rag_data/三角函数学习路径.md",
         encoding="utf-8"
     )
     docs = loader.load()

@@ -1,11 +1,12 @@
 from langgraph.graph import StateGraph
-from .state import LearningState
-from .nodes import (
+from agent.learning_plan.state import LearningState
+from agent.learning_plan.nodes import (
     refine_goal,
     retrieve_knowledge,
     decide_strategy,
     generate_learning_plan_document,
 )
+
 
 def build_learning_plan_graph():
     builder = StateGraph(LearningState)

@@ -1,8 +1,5 @@
-
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
-
-
 
 class PPTRagInput(BaseModel):
     query: str = Field(..., description="要从Rag知识库中查询的问题，是一个字符串")
