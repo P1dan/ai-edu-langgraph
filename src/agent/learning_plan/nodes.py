@@ -48,7 +48,6 @@ def retrieve_knowledge(state: LearningState) -> LearningState:
     state["knowledge_context"] = rag.retrieve(query)
     return state
 
-
 def decide_strategy(state: LearningState) -> LearningState:
     prompt = f"""
 你是学习策略设计专家。
