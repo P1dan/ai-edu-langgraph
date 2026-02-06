@@ -2,7 +2,7 @@ import os
 from typing import TypedDict, Optional
 from langgraph.graph import StateGraph
 from src.agent.AliyunLLM import AliyunLLMWrapper
-
+from src.agent.rag_retriever import RAGRetriever
 
 os.environ["ALIYUN_API_KEY"] = "sk-30b0ba857316437087ace218df67aa95"
 # 1. State 定义
@@ -19,8 +19,6 @@ class LearningState(TypedDict):
 
     # -------- 最终输出 --------
     learning_plan_document: Optional[str]
-
-
 # 2. LLM 初始化（ChatGPT）
 # llm = ChatOpenAI(
 #     model="gpt-3.5-turbo",
@@ -37,7 +35,10 @@ llm = AliyunLLMWrapper(
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
     temperature=0.7
 )
-
+rag = RAGRetriever(
+    vector_db_path="vector_db/trigonometry",
+    top_k=4,
+)
 # 3. 各节点定义
 def refine_goal(state: LearningState) -> LearningState:
     """澄清学习目标"""
@@ -65,15 +66,19 @@ def refine_goal(state: LearningState) -> LearningState:
     return state
 
 def retrieve_knowledge(state: LearningState) -> LearningState:
-    """模拟 RAG：注入领域学习结构经验"""
-    state["knowledge_context"] = """
-- 该领域通常分为：基础 → 核心 → 应用 → 综合实践
-- 学习路径应避免一开始陷入细节
-- 时间应向核心能力和可迁移能力倾斜
-- 每阶段学习成果应可验证
+    """
+    RAG：从向量数据库中检索学习经验 / 结构知识
+    """
+    query = f"""
+学习目标：{state["refined_goal"]}
+用户背景：{state["background"]}
+请提供适合该目标的学习结构、阶段划分、注意事项
 """
-    return state
 
+    context = rag.retrieve(query)
+
+    state["knowledge_context"] = context
+    return state
 
 def decide_strategy(state: LearningState) -> LearningState:
     """生成整体学习策略"""
@@ -103,7 +108,6 @@ def decide_strategy(state: LearningState) -> LearningState:
     state["learning_strategy"] = res.content
     return state
 
-
 def generate_learning_plan_document(state: LearningState) -> LearningState:
     """生成最终学习路径文档（融合：大纲 + 路线 + 时间）"""
     prompt = f"""
@@ -112,7 +116,7 @@ def generate_learning_plan_document(state: LearningState) -> LearningState:
 【学习目标】
 {state["refined_goal"]}
 
-【用户背景】
+【用户背景】      
 {state["background"]}
 
 【整体学习策略】
@@ -140,36 +144,28 @@ def generate_learning_plan_document(state: LearningState) -> LearningState:
     state["learning_plan_document"] = res.content
     return state
 
-
 # 4. LangGraph 组装
-
 builder = StateGraph(LearningState)
-
 builder.add_node("refine_goal", refine_goal)
 builder.add_node("retrieve_knowledge", retrieve_knowledge)
 builder.add_node("decide_strategy", decide_strategy)
 builder.add_node("generate_learning_plan_document", generate_learning_plan_document)
-
 builder.set_entry_point("refine_goal")
-
 builder.add_edge("refine_goal", "retrieve_knowledge")
 builder.add_edge("retrieve_knowledge", "decide_strategy")
 builder.add_edge("decide_strategy", "generate_learning_plan_document")
-
 graph = builder.compile()
 
-
 # 5. 调用示例
-
 if __name__ == "__main__":
     result = graph.invoke({
-        "learning_goal": "系统学习高中数学",  # 你的核心学习目标
+        "learning_goal": "系统学习高中数学中的三角函数",  # 核心目标
         "background": "我已经掌握初中数学的基础知识，包括代数、几何、初步概率和统计",  # 学生背景
         "time_budget": "3 个月，每周 15 小时",  # 可用时间
-        "priority_topics": "函数、三角、立体几何、数列与概率",  # 想重点学习的章节
+        "priority_topics": "三角函数：正弦、余弦、正切函数性质，图像与公式，解三角形",  # 具体内容聚焦
     })
     # 7️⃣ 输出到 Markdown 文件
-    output_file = "learning_plan.md"
+    output_file = "../rag_data/三角函数学习路径.md"
     with open(output_file, "w", encoding="utf-8") as f:
         f.write(result["learning_plan_document"])
     print(f"\n学习路径文档已保存到 {output_file}")
