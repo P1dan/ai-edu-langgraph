@@ -1,10 +1,27 @@
 import os
-from typing import TypedDict, Optional
+from typing import TypedDict, Optional, cast
+from langchain_community.embeddings import DashScopeEmbeddings
 from langgraph.graph import StateGraph
 from src.agent.AliyunLLM import AliyunLLMWrapper
 from src.agent.rag_retriever import RAGRetriever
 
+import os
+from pathlib import Path
+from langchain_community.embeddings import DashScopeEmbeddings
+from src.agent.rag_retriever import RAGRetriever
+
+# 设置阿里 API Key
 os.environ["ALIYUN_API_KEY"] = "sk-30b0ba857316437087ace218df67aa95"
+
+# graph.py 所在目录
+AGENT_DIR = Path(__file__).resolve().parent
+
+# 项目根目录
+PROJECT_ROOT = AGENT_DIR.parent  # src/
+
+# 向量数据库绝对路径
+VECTOR_DB_PATH = PROJECT_ROOT / "vector_db" / "trigonometry"
+
 # 1. State 定义
 class LearningState(TypedDict):
     # -------- 用户输入 --------
@@ -31,12 +48,14 @@ class LearningState(TypedDict):
 #     temperature=0.2,      # 控制生成随机性
 # )
 llm = AliyunLLMWrapper(
-    model_name="qwen-plus",   # 或 "qwen-plus"
+    model_name="qwen-plus",   #
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
     temperature=0.7
 )
+
+# 初始化 RAG
 rag = RAGRetriever(
-    vector_db_path="vector_db/trigonometry",
+    vector_db_path=str(VECTOR_DB_PATH),  # 转为字符串
     top_k=4,
 )
 # 3. 各节点定义
@@ -158,12 +177,13 @@ graph = builder.compile()
 
 # 5. 调用示例
 if __name__ == "__main__":
-    result = graph.invoke({
-        "learning_goal": "系统学习高中数学中的三角函数",  # 核心目标
-        "background": "我已经掌握初中数学的基础知识，包括代数、几何、初步概率和统计",  # 学生背景
-        "time_budget": "3 个月，每周 15 小时",  # 可用时间
-        "priority_topics": "三角函数：正弦、余弦、正切函数性质，图像与公式，解三角形",  # 具体内容聚焦
-    })
+    result = graph.invoke(
+        cast(LearningState, {
+            "learning_goal": "系统学习高中数学中的三角函数",
+            "background": "我已经掌握初中数学的基础知识，包括代数、几何、初步概率和统计",
+            "time_budget": "3 个月，每周 15 小时",
+        })
+    )
     # 7️⃣ 输出到 Markdown 文件
     output_file = "../rag_data/三角函数学习路径.md"
     with open(output_file, "w", encoding="utf-8") as f:

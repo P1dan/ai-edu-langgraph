@@ -5,7 +5,7 @@
       <excludeFolder url="file://$MODULE_DIR$/agent.egg-info" />
       <excludeFolder url="file://$MODULE_DIR$/venv" />
     </content>
-    <orderEntry type="jdk" jdkName="Python 3.11 (人工智能项目)" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="py311" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
   <component name="PyDocumentationSettings">
