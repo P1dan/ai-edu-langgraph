@@ -1,3 +1,5 @@
+import asyncio
+from langgraph.types import interrupt
 from agent.llm.AliyunLLM import AliyunLLMWrapper
 from agent.rag.rag_retriever import RAGRetriever
 from agent.config import VECTOR_DB_DIR
@@ -9,13 +11,12 @@ llm = AliyunLLMWrapper(
     base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
     temperature=0.7,
 )
-
 rag = RAGRetriever(
     vector_db_path=str(VECTOR_DB_DIR),
     top_k=4,
 )
 
-def refine_goal(state: LearningState) -> LearningState:
+async def refine_goal(state: LearningState) -> LearningState:
     prompt = f"""
 你是学习规划专家。
 
@@ -35,20 +36,27 @@ def refine_goal(state: LearningState) -> LearningState:
 
 直接输出澄清后的目标。
 """
-    state["refined_goal"] = llm.invoke(prompt).content
+    state["refined_goal"] = await llm.invoke(prompt).content
     return state
 
-
-def retrieve_knowledge(state: LearningState) -> LearningState:
+async def retrieve_knowledge(state: LearningState) -> LearningState:
     query = f"""
 学习目标：{state["refined_goal"]}
 用户背景：{state["background"]}
 请提供适合该目标的学习结构、阶段划分、注意事项
 """
-    state["knowledge_context"] = rag.retrieve(query)
+
+    # IO操作放入线程池
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: rag.retrieve(query)
+    )
+
+    state["knowledge_context"] = result
     return state
 
-def decide_strategy(state: LearningState) -> LearningState:
+async def decide_strategy(state: LearningState) -> LearningState:
     prompt = f"""
 你是学习策略设计专家。
 
@@ -69,32 +77,88 @@ def decide_strategy(state: LearningState) -> LearningState:
 - 理论 vs 实践占比
 - 阶段性重点
 """
-    state["learning_strategy"] = llm.invoke(prompt).content
+    state["learning_strategy"] = await llm.invoke(prompt).content
     return state
 
+async def generate_learning_plan_document(state: LearningState):
 
-def generate_learning_plan_document(state: LearningState) -> LearningState:
+    state["plan_status"] = "generating"
+
     prompt = f"""
-你需要生成一份【完整学习路径文档（Markdown）】。
+    你需要生成一份【完整学习路径文档（Markdown）】。
+    ...
+    """
 
-【学习目标】
-{state["refined_goal"]}
+    response = await llm.ainvoke(prompt)
+    document = response.content
 
-【用户背景】
-{state["background"]}
+    state["learning_plan_document"] = document
+    state["plan_status"] = "waiting_teacher_review"
 
-【整体学习策略】
-{state["learning_strategy"]}
+    return interrupt(
+        {
+            "type": "plan_generated",
+            "plan_id": state["plan_id"],
+            "document": document
+        }
+    )
 
-【总时间约束】
-{state["time_budget"]}
+async def teacher_review(state: LearningState):
 
-【输出要求】：
-1. 使用 Markdown
-2. 按阶段组织
-3. 模块包含目标 / 内容 / 前置 / 时间
-4. 时间分配合理
-5. 只输出文档
-"""
-    state["learning_plan_document"] = llm.invoke(prompt).content
+    # 第一次进入，等待老师输入
+    if state.get("is_approved") is None:
+
+        state["plan_status"] = "waiting_teacher_review"
+
+        return interrupt(
+            {
+                "type": "teacher_review",
+                "plan_id": state["plan_id"],
+                "document": state["learning_plan_document"]
+            }
+        )
+
+    # 恢复后执行
+    if state["is_approved"]:
+
+        state["review_status"] = "approved"
+        state["plan_status"] = "approved"
+        state["current_stage"] = "completed"
+
+    else:
+
+        state["review_status"] = "revise"
+        state["plan_status"] = "revising"
+        state["review_round"] = state.get("review_round", 0) + 1
+
+        # 为下一轮清空审批状态
+        state["is_approved"] = None
+
     return state
+
+async def revise_plan(state: LearningState):
+
+    # 根据 teacher_feedback 修改文档
+    prompt = f"""
+    老师反馈：
+    {state["teacher_feedback"]}
+
+    原始文档：
+    {state["learning_plan_document"]}
+
+    请根据反馈修改文档。
+    """
+
+    response = await llm.ainvoke(prompt)
+
+    state["learning_plan_document"] = response.content
+    state["plan_status"] = "waiting_teacher_review"
+
+    # 重置审核状态
+    state["is_approved"] = None
+    state["teacher_feedback"] = None
+
+    return state
+
+
+
